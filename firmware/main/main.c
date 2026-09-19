@@ -21,11 +21,16 @@
 #include "freertos/task.h"
 #include "nvs_flash.h"
 
+#include "cJSON.h"
+#include "console.h"
+#include "format.h"
 #include "panchangam.h"
+#include "x_client.h"
 
 #define TAG "panch"
 
 #define TZ_MYT              "MYT-8"
+#define MYT_OFFSET_SECONDS  (8 * 3600)
 #define CALC_TASK_STACK     (32 * 1024)
 #define UNIX_EPOCH_JD       2440587.5
 #define MIN_VALID_EPOCH     1735689600  /* 2025-01-01: anything earlier means "not synced" */
@@ -33,10 +38,10 @@
 static EventGroupHandle_t s_wifi_events;
 #define WIFI_CONNECTED_BIT  BIT0
 
-static const char *const s_vara_names[] = {
-    "Ravivara (Sun)", "Somavara (Mon)", "Mangalavara (Tue)", "Budhavara (Wed)",
-    "Guruvara (Thu)", "Shukravara (Fri)", "Shanivara (Sat)",
-};
+/* Commands from the console task to the calc task. */
+static EventGroupHandle_t s_cmd_events;
+#define CMD_X_CYCLE_BIT     BIT0
+static volatile int s_x_cycle_offset;
 
 /* ---- Wi-Fi --------------------------------------------------------------- */
 
@@ -108,61 +113,19 @@ static time_t seconds_until_post(time_t now)
     return target - now;
 }
 
-/* ---- message ------------------------------------------------------------- */
-
-static void fmt_time(char *buf, size_t n, double jd_ut)
-{
-    time_t t = (time_t)((jd_ut - UNIX_EPOCH_JD) * 86400.0 + 0.5);
-    struct tm tm;
-    localtime_r(&t, &tm);
-    strftime(buf, n, "%H:%M", &tm);
-}
-
-static int append_spans(char *buf, size_t n, const char *label, const panch_span_t *s, int count)
-{
-    int len = snprintf(buf, n, "%s:", label);
-    for (int i = 0; i < count && len < (int)n; i++) {
-        char a[8], b[8];
-        fmt_time(a, sizeof a, s[i].start_jd_ut);
-        fmt_time(b, sizeof b, s[i].end_jd_ut);
-        len += snprintf(buf + len, n - len, " #%d (%s-%s)", s[i].index, a, b);
-    }
-    return len + snprintf(buf + len, n - len, "\\n");
-}
-
-static int append_period(char *buf, size_t n, const char *label, const panch_period_t *p)
-{
-    char a[8], b[8];
-    fmt_time(a, sizeof a, p->start_jd_ut);
-    fmt_time(b, sizeof b, p->end_jd_ut);
-    return snprintf(buf, n, "%s: %s-%s\\n", label, a, b);
-}
-
-/* Builds the Slack JSON body ({"text": ...}). All inserted text is ASCII with
-   no quotes or backslashes, so no JSON escaping is needed beyond the literal \n. */
-static void format_message(char *buf, size_t n, const panch_query_t *q, const panch_day_t *d)
-{
-    char sr[8], ss[8];
-    fmt_time(sr, sizeof sr, d->sunrise_jd_ut);
-    fmt_time(ss, sizeof ss, d->sunset_jd_ut);
-
-    int len = snprintf(buf, n, "{\"text\":\"*Panchangam %04d-%02d-%02d* (MYT)\\n"
-                       "Vara: %s\\nSunrise: %s  Sunset: %s\\n",
-                       q->year, q->month, q->day, s_vara_names[(d->vara.index - 1) % 7], sr, ss);
-    len += append_spans(buf + len, n - len, "Tithi", d->tithi.spans, d->tithi.count);
-    len += append_spans(buf + len, n - len, "Nakshatra", d->nakshatra.spans, d->nakshatra.count);
-    len += append_spans(buf + len, n - len, "Yoga", d->yoga.spans, d->yoga.count);
-    len += append_spans(buf + len, n - len, "Karana", d->karana.spans, d->karana.count);
-    len += append_period(buf + len, n - len, "Rahu Kalam", &d->rahu_kalam);
-    len += append_period(buf + len, n - len, "Yamagandam", &d->yamagandam);
-    len += append_period(buf + len, n - len, "Gulika", &d->gulika);
-    snprintf(buf + len, n - len, "\"}");
-}
-
 /* ---- Slack --------------------------------------------------------------- */
 
-static esp_err_t slack_post(const char *json)
+/* Post plain text to the Slack webhook as {"text": ...}. */
+static esp_err_t slack_send_text(const char *text)
 {
+    cJSON *req = cJSON_CreateObject();
+    cJSON_AddStringToObject(req, "text", text);
+    char *json = cJSON_PrintUnformatted(req);
+    cJSON_Delete(req);
+    if (!json) {
+        return ESP_ERR_NO_MEM;
+    }
+
     esp_http_client_config_t cfg = {
         .url = CONFIG_PANCH_SLACK_WEBHOOK_URL,
         .method = HTTP_METHOD_POST,
@@ -183,21 +146,24 @@ static esp_err_t slack_post(const char *json)
         ESP_LOGE(TAG, "Slack POST failed: %s", esp_err_to_name(err));
     }
     esp_http_client_cleanup(c);
+    free(json);
     return err;
 }
 
-/* Compute and post the panchangam for the local civil date containing `now`. */
-static void post_today(time_t now)
+/* ---- the day ------------------------------------------------------------- */
+
+/* Query and result for the local civil date containing `when`. */
+static int compute_day(time_t when, panch_query_t *q, panch_day_t *day)
 {
     struct tm tm;
-    localtime_r(&now, &tm);
+    localtime_r(&when, &tm);
     tm.tm_hour = tm.tm_min = tm.tm_sec = 0;
     time_t start = mktime(&tm);
     struct tm next = tm;
     next.tm_mday += 1;
     time_t next_start = mktime(&next);
 
-    panch_query_t q = {
+    *q = (panch_query_t){
         .year = tm.tm_year + 1900,
         .month = tm.tm_mon + 1,
         .day = tm.tm_mday,
@@ -209,18 +175,86 @@ static void post_today(time_t now)
             .elevation_m = CONFIG_PANCH_ELEVATION_M,
         },
     };
-
-    static panch_day_t day;
-    int rc = panch_compute_day(&q, &day);
+    int rc = panch_compute_day(q, day);
     if (rc != PANCH_OK) {
         ESP_LOGE(TAG, "panch_compute_day: %s", panch_strerror(rc));
+    }
+    return rc;
+}
+
+/* Run the X cycle for `text` and report anything that needs a human on Slack. */
+static void x_publish(const char *text)
+{
+    switch (x_post(text)) {
+    case XPOST_OK:
+        ESP_LOGI(TAG, "X: posted");
+        break;
+    case XPOST_INVALID_GRANT:
+        ESP_LOGE(TAG, "X: refresh token rejected (invalid_grant); skipping X until re-seeded");
+        slack_send_text("X posting stopped: the refresh token was rejected (invalid_grant). "
+                        "Re-seed it in the serial console with x_set_refresh <token>.");
+        break;
+    case XPOST_DUPLICATE:
+        ESP_LOGW(TAG, "X: duplicate content, not posted");
+        break;
+    case XPOST_NO_CREDENTIALS:
+        break; /* already logged by x_post */
+    case XPOST_FAILED:
+    default:
+        ESP_LOGE(TAG, "X: post failed");
+        break;
+    }
+}
+
+/* Compute and post the panchangam for the local civil date containing `now`:
+   Slack first, then X. */
+static void post_today(time_t now)
+{
+    panch_query_t q;
+    static panch_day_t day;
+    if (compute_day(now, &q, &day) != PANCH_OK) {
         return;
     }
 
-    static char body[1536];
-    format_message(body, sizeof body, &q, &day);
-    ESP_LOGI(TAG, "%s", body);
-    slack_post(body);
+    static char text[2048];
+    if (panch_format_slack(text, sizeof text, &q, &day, MYT_OFFSET_SECONDS) == PANCH_OK) {
+        ESP_LOGI(TAG, "%s", text);
+        slack_send_text(text);
+    } else {
+        ESP_LOGE(TAG, "Slack text did not fit its buffer");
+    }
+
+    if (panch_format_x(text, sizeof text, &q, &day, MYT_OFFSET_SECONDS) == PANCH_OK) {
+        ESP_LOGI(TAG, "X text (%u weighted):\n%s", (unsigned)panch_x_weight(text), text);
+        x_publish(text);
+    } else {
+        ESP_LOGE(TAG, "X text does not fit %d weighted characters; skipping X", PANCH_X_MAX_WEIGHT);
+    }
+}
+
+/* Console `x_cycle`: refresh + post to X only, for today + offset days. A
+   non-zero offset gives fresh text, so X does not reject it as a duplicate. */
+static void x_cycle_now(int day_offset)
+{
+    panch_query_t q;
+    static panch_day_t day;
+    if (compute_day(time(NULL) + (time_t)day_offset * 86400, &q, &day) != PANCH_OK) {
+        return;
+    }
+    static char text[2048];
+    if (panch_format_x(text, sizeof text, &q, &day, MYT_OFFSET_SECONDS) != PANCH_OK) {
+        ESP_LOGE(TAG, "X text does not fit; skipping");
+        return;
+    }
+    ESP_LOGI(TAG, "x_cycle (%+d day): X text (%u weighted):\n%s", day_offset,
+             (unsigned)panch_x_weight(text), text);
+    x_publish(text);
+}
+
+static void request_x_cycle(int day_offset)
+{
+    s_x_cycle_offset = day_offset;
+    xEventGroupSetBits(s_cmd_events, CMD_X_CYCLE_BIT);
 }
 
 /* ---- the one calculation task -------------------------------------------- */
@@ -245,13 +279,16 @@ static void calc_task(void *arg)
         }
         time_t wait_s = seconds_until_post(now);
         ESP_LOGI(TAG, "next post in %lld s", (long long)wait_s);
-        /* Sleep in bounded chunks so an SNTP step correction is picked up. */
-        if (wait_s > 60) {
-            vTaskDelay(pdMS_TO_TICKS(60 * 1000));
+        /* Sleep in bounded chunks so an SNTP step correction is picked up; a
+           console command wakes the wait early. */
+        time_t chunk_s = wait_s > 60 ? 60 : wait_s;
+        EventBits_t bits = xEventGroupWaitBits(s_cmd_events, CMD_X_CYCLE_BIT, pdTRUE, pdFALSE,
+                                               pdMS_TO_TICKS(chunk_s * 1000));
+        if (bits & CMD_X_CYCLE_BIT) {
+            x_cycle_now(s_x_cycle_offset);
             continue;
         }
-        vTaskDelay(pdMS_TO_TICKS(wait_s * 1000));
-        if (!time_is_synced()) {
+        if (wait_s > 60 || !time_is_synced()) {
             continue;
         }
         post_today(time(NULL));
@@ -268,7 +305,9 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(err);
 
+    s_cmd_events = xEventGroupCreate();
     wifi_start();
     time_start();
+    console_start(request_x_cycle);
     xTaskCreate(calc_task, "calc", CALC_TASK_STACK, NULL, 5, NULL);
 }
