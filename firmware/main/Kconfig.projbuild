@@ -14,6 +14,24 @@ menu "Panchangam Configuration"
         help
             Secret. Set it in menuconfig; sdkconfig is gitignored.
 
+    config X_OAUTH2_ACCESS_TOKEN
+        string "X OAuth 2.0 user access token"
+        default ""
+        help
+            Secret. Used as-is as the Bearer token for POST /2/tweets; no refresh
+            flow. Leave empty to skip X. Set it in menuconfig; sdkconfig is
+            gitignored. X user access tokens expire (typically after 2 hours).
+
+    config X_OAUTH2_CLIENT_ID
+        string "X OAuth 2.0 client id (unused for now)"
+        default ""
+
+    config X_OAUTH2_CLIENT_SECRET
+        string "X OAuth 2.0 client secret (unused for now)"
+        default ""
+        help
+            Secret. Stored for future use; not used yet.
+
     config PANCH_POST_HOUR
         int "Daily post hour (MYT)"
         range 0 23

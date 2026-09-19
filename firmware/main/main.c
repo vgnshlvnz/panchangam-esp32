@@ -22,13 +22,13 @@
 #include "nvs_flash.h"
 
 #include "cJSON.h"
-#include "console.h"
 #include "format.h"
 #include "panchangam.h"
-#include "x_client.h"
+#include "x_post.h"
 
 #define TAG "panch"
 
+#define X_RETRY_DELAY_MS    (60 * 1000)
 #define TZ_MYT              "MYT-8"
 #define MYT_OFFSET_SECONDS  (8 * 3600)
 #define CALC_TASK_STACK     (32 * 1024)
@@ -37,11 +37,6 @@
 
 static EventGroupHandle_t s_wifi_events;
 #define WIFI_CONNECTED_BIT  BIT0
-
-/* Commands from the console task to the calc task. */
-static EventGroupHandle_t s_cmd_events;
-#define CMD_X_CYCLE_BIT     BIT0
-static volatile int s_x_cycle_offset;
 
 /* ---- Wi-Fi --------------------------------------------------------------- */
 
@@ -182,27 +177,40 @@ static int compute_day(time_t when, panch_query_t *q, panch_day_t *day)
     return rc;
 }
 
-/* Run the X cycle for `text` and report anything that needs a human on Slack. */
+/* Post to X after Slack has already been sent, so X can never delay Slack.
+   401: no retry, Slack alert, X skipped until the next daily post. Duplicate
+   content: logged, no retry. Anything else: one retry after 60 s, then a Slack
+   alert with the status code. */
 static void x_publish(const char *text)
 {
-    switch (x_post(text)) {
-    case XPOST_OK:
-        ESP_LOGI(TAG, "X: posted");
+    int status;
+    x_post_result_t r = x_post_tweet(text, &status);
+    if (r == X_POST_RETRYABLE) {
+        ESP_LOGW(TAG, "X post failed (HTTP %d); retrying once in %d s", status, X_RETRY_DELAY_MS / 1000);
+        vTaskDelay(pdMS_TO_TICKS(X_RETRY_DELAY_MS));
+        r = x_post_tweet(text, &status);
+    }
+    switch (r) {
+    case X_POST_OK:
+    case X_POST_NO_TOKEN: /* logged by x_post_tweet */
         break;
-    case XPOST_INVALID_GRANT:
-        ESP_LOGE(TAG, "X: refresh token rejected (invalid_grant); skipping X until re-seeded");
-        slack_send_text("X posting stopped: the refresh token was rejected (invalid_grant). "
-                        "Re-seed it in the serial console with x_set_refresh <token>.");
+    case X_POST_UNAUTHORIZED:
+        slack_send_text("X post failed: 401 Unauthorized. The access token may have expired. "
+                        "Update X_OAUTH2_ACCESS_TOKEN.");
         break;
-    case XPOST_DUPLICATE:
-        ESP_LOGW(TAG, "X: duplicate content, not posted");
+    case X_POST_DUPLICATE:
+        break; /* logged by x_post_tweet */
+    case X_POST_RETRYABLE:
+    default: {
+        char msg[96];
+        if (status > 0) {
+            snprintf(msg, sizeof msg, "X post failed: HTTP %d (after one retry).", status);
+        } else {
+            snprintf(msg, sizeof msg, "X post failed: network error (after one retry).");
+        }
+        slack_send_text(msg);
         break;
-    case XPOST_NO_CREDENTIALS:
-        break; /* already logged by x_post */
-    case XPOST_FAILED:
-    default:
-        ESP_LOGE(TAG, "X: post failed");
-        break;
+    }
     }
 }
 
@@ -232,31 +240,6 @@ static void post_today(time_t now)
     }
 }
 
-/* Console `x_cycle`: refresh + post to X only, for today + offset days. A
-   non-zero offset gives fresh text, so X does not reject it as a duplicate. */
-static void x_cycle_now(int day_offset)
-{
-    panch_query_t q;
-    static panch_day_t day;
-    if (compute_day(time(NULL) + (time_t)day_offset * 86400, &q, &day) != PANCH_OK) {
-        return;
-    }
-    static char text[2048];
-    if (panch_format_x(text, sizeof text, &q, &day, MYT_OFFSET_SECONDS) != PANCH_OK) {
-        ESP_LOGE(TAG, "X text does not fit; skipping");
-        return;
-    }
-    ESP_LOGI(TAG, "x_cycle (%+d day): X text (%u weighted):\n%s", day_offset,
-             (unsigned)panch_x_weight(text), text);
-    x_publish(text);
-}
-
-static void request_x_cycle(int day_offset)
-{
-    s_x_cycle_offset = day_offset;
-    xEventGroupSetBits(s_cmd_events, CMD_X_CYCLE_BIT);
-}
-
 /* ---- the one calculation task -------------------------------------------- */
 
 static void calc_task(void *arg)
@@ -279,16 +262,13 @@ static void calc_task(void *arg)
         }
         time_t wait_s = seconds_until_post(now);
         ESP_LOGI(TAG, "next post in %lld s", (long long)wait_s);
-        /* Sleep in bounded chunks so an SNTP step correction is picked up; a
-           console command wakes the wait early. */
-        time_t chunk_s = wait_s > 60 ? 60 : wait_s;
-        EventBits_t bits = xEventGroupWaitBits(s_cmd_events, CMD_X_CYCLE_BIT, pdTRUE, pdFALSE,
-                                               pdMS_TO_TICKS(chunk_s * 1000));
-        if (bits & CMD_X_CYCLE_BIT) {
-            x_cycle_now(s_x_cycle_offset);
+        /* Sleep in bounded chunks so an SNTP step correction is picked up. */
+        if (wait_s > 60) {
+            vTaskDelay(pdMS_TO_TICKS(60 * 1000));
             continue;
         }
-        if (wait_s > 60 || !time_is_synced()) {
+        vTaskDelay(pdMS_TO_TICKS(wait_s * 1000));
+        if (!time_is_synced()) {
             continue;
         }
         post_today(time(NULL));
@@ -305,9 +285,7 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(err);
 
-    s_cmd_events = xEventGroupCreate();
     wifi_start();
     time_start();
-    console_start(request_x_cycle);
     xTaskCreate(calc_task, "calc", CALC_TASK_STACK, NULL, 5, NULL);
 }
