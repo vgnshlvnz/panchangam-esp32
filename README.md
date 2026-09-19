@@ -24,7 +24,6 @@ The Tamil month is not computed, because the Python reference does not compute i
 | `test/` | Reference generator, validator, smoke test, compare harness, `reference.json` |
 | `firmware/` | ESP-IDF v5.5 project: Wi-Fi, SNTP, Slack post |
 | `third_party/swisseph` | Swiss Ephemeris (git submodule) |
-| `docs/wiki/` | Usage guides (see below) |
 
 Fixed choices: Swiss Ephemeris in **Moshier mode only** (no `.se1` data files),
 **Lahiri** ayanamsa, sunrise as the **upper limb with refraction**. Times are
@@ -41,7 +40,7 @@ make -C test smoke && ./test/smoke # Swiss Ephemeris vs Python, 3 dates
 
 `make test` compares the C port with 750 reference cases from the Python
 implementation. All angas and timings must agree within 2 seconds. See the
-[Host build and tests](docs/wiki/Host-build-and-tests.md) page.
+[Host build and tests](https://github.com/vgnshlvnz/panchangam-esp32/wiki/Host-build-and-tests) page.
 
 ## Using the C API
 
@@ -59,25 +58,24 @@ if (rc != PANCH_OK) { /* panch_strerror(rc) */ }
 
 The core has no time zone database, so the caller supplies the two local
 midnights. Details and a complete example are in
-[C API usage](docs/wiki/C-API-usage.md).
+[C API usage](https://github.com/vgnshlvnz/panchangam-esp32/wiki/C-API-usage).
 
 ## Firmware
 
 Configure with `idf.py menuconfig` under **Panchangam Configuration**, then build
-and flash. See [Firmware](docs/wiki/Firmware.md). Nothing should be flashed until
+and flash. See [Firmware](https://github.com/vgnshlvnz/panchangam-esp32/wiki/Firmware). Nothing should be flashed until
 the host tests pass.
 
 ## Documentation
 
-- [Home](docs/wiki/Home.md)
-- [Host build and tests](docs/wiki/Host-build-and-tests.md)
-- [C API usage](docs/wiki/C-API-usage.md)
-- [Firmware](docs/wiki/Firmware.md)
-- [Regenerating the reference data](docs/wiki/Regenerating-reference-data.md)
-- [Conventions](CONVENTIONS.md), [test schema](test/SCHEMA.md)
+Usage guides are on the [project wiki](https://github.com/vgnshlvnz/panchangam-esp32/wiki).
 
-`docs/wiki/` is written so the pages can be copied unchanged into the GitHub
-wiki repository (`panchangam-esp32.wiki.git`).
+- [Home](https://github.com/vgnshlvnz/panchangam-esp32/wiki/Home)
+- [Host build and tests](https://github.com/vgnshlvnz/panchangam-esp32/wiki/Host-build-and-tests)
+- [C API usage](https://github.com/vgnshlvnz/panchangam-esp32/wiki/C-API-usage)
+- [Firmware](https://github.com/vgnshlvnz/panchangam-esp32/wiki/Firmware)
+- [Regenerating the reference data](https://github.com/vgnshlvnz/panchangam-esp32/wiki/Regenerating-reference-data)
+- [Conventions](CONVENTIONS.md), [test schema](test/SCHEMA.md)
 
 ## Constraints
 
