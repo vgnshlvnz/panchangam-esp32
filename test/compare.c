@@ -14,7 +14,7 @@
 
 #include "../core/panchangam.h"
 
-#define TOL_SECONDS 5.0
+#define TOL_SECONDS 2.0
 
 /* ---- minimal JSON reader (numbers, strings, arrays, objects) ------------- */
 
