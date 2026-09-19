@@ -1,11 +1,12 @@
 /*
  * format_test.c -- host test for core/format.c.
  *
- * 1. For each case in test/format_cases.txt (written by
- *    tools/gen_format_cases.py from the Python reference formatter), build the
- *    day, run panch_format_slack / panch_format_x and require byte-identical
- *    output.
- * 2. Name, karana-rule, X-weight and buffer-overflow unit checks.
+ * 1. Length test: every case in test/format_cases.txt (all 750 reference dates,
+ *    written by tools/gen_format_cases.py) must produce an X text within
+ *    PANCH_X_MAX_WEIGHT.
+ * 2. Byte-for-byte test: the 30 cases that carry expected text (from the Python
+ *    reference formatter) must match panch_format_slack / panch_format_x exactly.
+ * 3. Name, karana-rule, X-weight and buffer-overflow unit checks.
  *
  * Usage: format_test [format_cases.txt]     Exit status non-zero on any failure.
  */
@@ -94,22 +95,30 @@ static void append_line(char *dst, size_t cap, const char *line)
     strcpy(dst + len, line);
 }
 
-static int run_case(const tcase_t *c, int index)
+static int n_compared;
+
+static void run_case(const tcase_t *c)
 {
     char buf[2048];
-    int rc = panch_format_slack(buf, sizeof buf, &c->q, &c->d, UTC_OFFSET);
+
+    /* Length test: every date. */
+    int rc = panch_format_x(buf, sizeof buf, &c->q, &c->d, UTC_OFFSET);
+    CHECK(rc == PANCH_OK, "%s x rc=%d", c->date, rc);
+    CHECK(panch_x_weight(buf) <= PANCH_X_MAX_WEIGHT, "%s x weight %u", c->date,
+          (unsigned)panch_x_weight(buf));
+
+    if (c->x[0] == '\0') return; /* no expected text for this date */
+
+    /* Byte-for-byte test against the Python formatter. */
+    n_compared++;
+    CHECK(strcmp(buf, c->x) == 0, "%s x differs:\n--- C\n%s\n--- Python\n%s", c->date, buf, c->x);
+
+    rc = panch_format_slack(buf, sizeof buf, &c->q, &c->d, UTC_OFFSET);
     /* Expected Slack text ends with the last line's newline. */
     char want[2100];
     snprintf(want, sizeof want, "%s\n", c->slack);
     CHECK(rc == PANCH_OK, "%s slack rc=%d", c->date, rc);
     CHECK(strcmp(buf, want) == 0, "%s slack differs:\n--- C\n%s--- Python\n%s", c->date, buf, want);
-
-    rc = panch_format_x(buf, sizeof buf, &c->q, &c->d, UTC_OFFSET);
-    CHECK(rc == PANCH_OK, "%s x rc=%d", c->date, rc);
-    CHECK(strcmp(buf, c->x) == 0, "%s x differs:\n--- C\n%s\n--- Python\n%s", c->date, buf, c->x);
-    CHECK(panch_x_weight(buf) <= PANCH_X_MAX_WEIGHT, "%s x weight", c->date);
-    (void)index;
-    return 0;
 }
 
 int main(int argc, char **argv)
@@ -133,7 +142,8 @@ int main(int argc, char **argv)
         } else if (!strcmp(line, "@@SLACK")) { mode = 1;
         } else if (!strcmp(line, "@@X")) { mode = 2;
         } else if (!strcmp(line, "@@END")) {
-            run_case(&c, ncases++);
+            run_case(&c);
+            ncases++;
             in_case = 0;
         } else if (mode == 1) { append_line(c.slack, sizeof c.slack, line);
         } else if (mode == 2) { append_line(c.x, sizeof c.x, line);
@@ -161,8 +171,10 @@ int main(int argc, char **argv)
         CHECK(panch_format_x(tiny, sizeof tiny, &c.q, &c.d, UTC_OFFSET) == PANCH_ERR_CAPACITY, "x overflow rc");
         CHECK(tiny[0] == '\0', "x overflow leaves empty string");
     }
-    CHECK(ncases == 30, "expected 30 cases, got %d", ncases);
+    CHECK(ncases == 750, "expected 750 cases, got %d", ncases);
+    CHECK(n_compared == 30, "expected 30 byte-for-byte cases, got %d", n_compared);
 
-    printf("%d case(s), %d failure(s)\n", ncases, failures);
+    printf("%d case(s) length-checked, %d compared byte for byte, %d failure(s)\n",
+           ncases, n_compared, failures);
     return failures ? 1 : 0;
 }

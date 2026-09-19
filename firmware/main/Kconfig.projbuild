@@ -14,6 +14,44 @@ menu "Panchangam Configuration"
         help
             Secret. Set it in menuconfig; sdkconfig is gitignored.
 
+    config X_OAUTH1_CONSUMER_KEY
+        string "X OAuth 1.0a API key (consumer key)"
+        default ""
+        help
+            Secret. Set it in menuconfig; sdkconfig is gitignored. All four
+            OAuth 1.0a values must be set, or X is skipped.
+
+    config X_OAUTH1_CONSUMER_SECRET
+        string "X OAuth 1.0a API secret (consumer secret)"
+        default ""
+        help
+            Secret. Set it in menuconfig; sdkconfig is gitignored. All four
+            OAuth 1.0a values must be set, or X is skipped.
+
+    config X_OAUTH1_ACCESS_TOKEN
+        string "X OAuth 1.0a access token"
+        default ""
+        help
+            Secret. Set it in menuconfig; sdkconfig is gitignored. All four
+            OAuth 1.0a values must be set, or X is skipped.
+
+    config X_OAUTH1_ACCESS_TOKEN_SECRET
+        string "X OAuth 1.0a access token secret"
+        default ""
+        help
+            Secret. Set it in menuconfig; sdkconfig is gitignored. All four
+            OAuth 1.0a values must be set, or X is skipped.
+
+    config X_OAUTH2_CLIENT_ID
+        string "X OAuth 2.0 client id (unused for now)"
+        default ""
+
+    config X_OAUTH2_CLIENT_SECRET
+        string "X OAuth 2.0 client secret (unused for now)"
+        default ""
+        help
+            Secret. Stored for future use; not used yet.
+
     config PANCH_POST_HOUR
         int "Daily post hour (MYT)"
         range 0 23
