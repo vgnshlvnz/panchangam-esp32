@@ -14,13 +14,33 @@ menu "Panchangam Configuration"
         help
             Secret. Set it in menuconfig; sdkconfig is gitignored.
 
-    config X_OAUTH2_ACCESS_TOKEN
-        string "X OAuth 2.0 user access token"
+    config X_OAUTH1_CONSUMER_KEY
+        string "X OAuth 1.0a API key (consumer key)"
         default ""
         help
-            Secret. Used as-is as the Bearer token for POST /2/tweets; no refresh
-            flow. Leave empty to skip X. Set it in menuconfig; sdkconfig is
-            gitignored. X user access tokens expire (typically after 2 hours).
+            Secret. Set it in menuconfig; sdkconfig is gitignored. All four
+            OAuth 1.0a values must be set, or X is skipped.
+
+    config X_OAUTH1_CONSUMER_SECRET
+        string "X OAuth 1.0a API secret (consumer secret)"
+        default ""
+        help
+            Secret. Set it in menuconfig; sdkconfig is gitignored. All four
+            OAuth 1.0a values must be set, or X is skipped.
+
+    config X_OAUTH1_ACCESS_TOKEN
+        string "X OAuth 1.0a access token"
+        default ""
+        help
+            Secret. Set it in menuconfig; sdkconfig is gitignored. All four
+            OAuth 1.0a values must be set, or X is skipped.
+
+    config X_OAUTH1_ACCESS_TOKEN_SECRET
+        string "X OAuth 1.0a access token secret"
+        default ""
+        help
+            Secret. Set it in menuconfig; sdkconfig is gitignored. All four
+            OAuth 1.0a values must be set, or X is skipped.
 
     config X_OAUTH2_CLIENT_ID
         string "X OAuth 2.0 client id (unused for now)"

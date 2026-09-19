@@ -196,7 +196,7 @@ static void x_publish(const char *text)
         break;
     case X_POST_UNAUTHORIZED:
         slack_send_text("X post failed: 401 Unauthorized. The access token may have expired. "
-                        "Update X_OAUTH2_ACCESS_TOKEN.");
+                        "Update the X_OAUTH1_* credentials.");
         break;
     case X_POST_DUPLICATE:
         break; /* logged by x_post_tweet */

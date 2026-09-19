@@ -1,11 +1,8 @@
 /*
- * x_post.h -- post one tweet with a static OAuth 2.0 user access token.
+ * x_post.h -- post one tweet with OAuth 1.0a user-context credentials.
  *
- * The token comes from menuconfig (CONFIG_X_OAUTH2_ACCESS_TOKEN) and is used
- * as-is: no refresh flow, no OAuth 1.0a. Equivalent to
- *   curl -X POST https://api.x.com/2/tweets \
- *        -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
- *        -d '{"text": "..."}'
+ * The four credentials come from menuconfig (CONFIG_X_OAUTH1_*). Each request
+ * is signed with HMAC-SHA1; the JSON body is not part of the signature.
  */
 #pragma once
 

@@ -16,6 +16,9 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 
 # X posting: empty placeholders. Set the real values with `idf.py menuconfig`
 # (Panchangam Configuration); sdkconfig is gitignored.
-CONFIG_X_OAUTH2_ACCESS_TOKEN=""
+CONFIG_X_OAUTH1_CONSUMER_KEY=""
+CONFIG_X_OAUTH1_CONSUMER_SECRET=""
+CONFIG_X_OAUTH1_ACCESS_TOKEN=""
+CONFIG_X_OAUTH1_ACCESS_TOKEN_SECRET=""
 CONFIG_X_OAUTH2_CLIENT_ID=""
 CONFIG_X_OAUTH2_CLIENT_SECRET=""

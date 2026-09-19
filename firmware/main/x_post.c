@@ -1,5 +1,6 @@
 #include "x_post.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,6 +9,10 @@
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "esp_random.h"
+#include "mbedtls/base64.h"
+#include "mbedtls/md.h"
+#include <time.h>
 
 #define TAG "x"
 
@@ -15,12 +20,79 @@
 #define HTTP_TIMEOUT_MS 15000
 #define RESP_MAX        2048
 
+/* RFC 3986 percent-encoding, as OAuth 1.0a requires. Returns false if it does not fit. */
+static bool pct_encode(const char *in, char *out, size_t n)
+{
+    size_t o = 0;
+    for (; *in; in++) {
+        unsigned char c = (unsigned char)*in;
+        bool plain = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                     c == '-' || c == '.' || c == '_' || c == '~';
+        if (o + (plain ? 1 : 3) >= n) return false;
+        o += plain ? (size_t)sprintf(out + o, "%c", c) : (size_t)sprintf(out + o, "%%%02X", c);
+    }
+    out[o] = '\0';
+    return true;
+}
+
+/* Build the OAuth 1.0a Authorization header for POST TWEET_URL. The JSON body
+   is not signed. */
+static bool oauth1_header(char *hdr, size_t n)
+{
+    char nonce[33], ts[24];
+    uint32_t r[4];
+    esp_fill_random(r, sizeof r);
+    snprintf(nonce, sizeof nonce, "%08x%08x%08x%08x", (unsigned)r[0], (unsigned)r[1], (unsigned)r[2], (unsigned)r[3]);
+    snprintf(ts, sizeof ts, "%lld", (long long)time(NULL));
+
+    static char key[128], tok[128], ksec[128], tsec[128];
+    static char params[768], enc_params[1024], enc_url[128], base[1400], skey[300];
+    if (!pct_encode(CONFIG_X_OAUTH1_CONSUMER_KEY, key, sizeof key) ||
+        !pct_encode(CONFIG_X_OAUTH1_ACCESS_TOKEN, tok, sizeof tok) ||
+        !pct_encode(CONFIG_X_OAUTH1_CONSUMER_SECRET, ksec, sizeof ksec) ||
+        !pct_encode(CONFIG_X_OAUTH1_ACCESS_TOKEN_SECRET, tsec, sizeof tsec)) {
+        return false;
+    }
+    /* Parameters in alphabetical order by name. */
+    snprintf(params, sizeof params,
+             "oauth_consumer_key=%s&oauth_nonce=%s&oauth_signature_method=HMAC-SHA1"
+             "&oauth_timestamp=%s&oauth_token=%s&oauth_version=1.0",
+             key, nonce, ts, tok);
+    if (!pct_encode(params, enc_params, sizeof enc_params) || !pct_encode(TWEET_URL, enc_url, sizeof enc_url)) {
+        return false;
+    }
+    snprintf(base, sizeof base, "POST&%s&%s", enc_url, enc_params);
+    snprintf(skey, sizeof skey, "%s&%s", ksec, tsec);
+
+    unsigned char mac[20];
+    unsigned char b64[32];
+    size_t b64len = 0;
+    if (mbedtls_md_hmac(mbedtls_md_info_from_type(MBEDTLS_MD_SHA1), (const unsigned char *)skey, strlen(skey),
+                        (const unsigned char *)base, strlen(base), mac) != 0 ||
+        mbedtls_base64_encode(b64, sizeof b64, &b64len, mac, sizeof mac) != 0) {
+        return false;
+    }
+    b64[b64len] = '\0';
+    char sig[64];
+    if (!pct_encode((const char *)b64, sig, sizeof sig)) return false;
+
+    int len = snprintf(hdr, n,
+                       "OAuth oauth_consumer_key=\"%s\", oauth_nonce=\"%s\", oauth_signature=\"%s\", "
+                       "oauth_signature_method=\"HMAC-SHA1\", oauth_timestamp=\"%s\", oauth_token=\"%s\", "
+                       "oauth_version=\"1.0\"",
+                       key, nonce, sig, ts, tok);
+    memset(skey, 0, sizeof skey);
+    memset(ksec, 0, sizeof ksec);
+    memset(tsec, 0, sizeof tsec);
+    return len > 0 && (size_t)len < n;
+}
+
 x_post_result_t x_post_tweet(const char *text, int *http_status)
 {
     *http_status = -1;
-    const char *token = CONFIG_X_OAUTH2_ACCESS_TOKEN;
-    if (token[0] == '\0') {
-        ESP_LOGW(TAG, "X_OAUTH2_ACCESS_TOKEN is empty; skipping X");
+    if (CONFIG_X_OAUTH1_CONSUMER_KEY[0] == '\0' || CONFIG_X_OAUTH1_CONSUMER_SECRET[0] == '\0' ||
+        CONFIG_X_OAUTH1_ACCESS_TOKEN[0] == '\0' || CONFIG_X_OAUTH1_ACCESS_TOKEN_SECRET[0] == '\0') {
+        ESP_LOGW(TAG, "X_OAUTH1_* credentials are not all set; skipping X");
         return X_POST_NO_TOKEN;
     }
 
@@ -33,8 +105,12 @@ x_post_result_t x_post_tweet(const char *text, int *http_status)
     }
 
     static char resp[RESP_MAX];
-    static char auth[1200];
-    snprintf(auth, sizeof auth, "Bearer %s", token);
+    static char auth[600];
+    if (!oauth1_header(auth, sizeof auth)) {
+        ESP_LOGE(TAG, "could not build the OAuth 1.0a header");
+        free(body);
+        return X_POST_RETRYABLE;
+    }
     resp[0] = '\0';
 
     esp_http_client_config_t cfg = {
