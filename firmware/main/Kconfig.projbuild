@@ -1,0 +1,45 @@
+menu "Panchangam Configuration"
+
+    config PANCH_WIFI_SSID
+        string "Wi-Fi SSID"
+        default ""
+
+    config PANCH_WIFI_PASSWORD
+        string "Wi-Fi password"
+        default ""
+
+    config PANCH_SLACK_WEBHOOK_URL
+        string "Slack Incoming Webhook URL"
+        default ""
+        help
+            Secret. Set it in menuconfig; sdkconfig is gitignored.
+
+    config PANCH_POST_HOUR
+        int "Daily post hour (MYT)"
+        range 0 23
+        default 5
+
+    config PANCH_POST_MINUTE
+        int "Daily post minute"
+        range 0 59
+        default 30
+
+    config PANCH_POST_AT_BOOT
+        bool "Post once right after time sync (connectivity test)"
+        default n
+
+    # Firmware choice (the Python core has no default location); Kuala Lumpur
+    # matches the test fixtures.
+    config PANCH_LATITUDE_MDEG
+        int "Latitude (millidegrees, north positive)"
+        default 3141
+
+    config PANCH_LONGITUDE_MDEG
+        int "Longitude (millidegrees, east positive)"
+        default 101686
+
+    config PANCH_ELEVATION_M
+        int "Elevation (m)"
+        default 56
+
+endmenu
