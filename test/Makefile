@@ -1,5 +1,6 @@
 # Host build of the Swiss Ephemeris core library plus test programs.
 #   make smoke && ./smoke
+#   make compare && ./compare [reference.json]
 
 SWE_DIR := ../third_party/swisseph
 BUILD   := build
@@ -16,8 +17,8 @@ CFLAGS  := -O2 -g -Wall -Wextra -std=gnu11
 SWE_CFLAGS := -O2 -g -Wall -std=gnu11 -fno-strict-aliasing
 LDLIBS  := -lm
 
-.PHONY: all smoke clean
-all: smoke
+.PHONY: all smoke compare clean
+all: smoke compare
 
 $(BUILD)/swe/%.o: $(SWE_DIR)/%.c
 	@mkdir -p $(dir $@)
@@ -29,6 +30,8 @@ $(BUILD)/libswe.a: $(SWE_OBJS)
 smoke: smoke.c smoke_expected.h $(BUILD)/libswe.a
 	$(CC) $(CFLAGS) -I$(SWE_DIR) smoke.c $(BUILD)/libswe.a $(LDLIBS) -o $@
 
+compare: compare.c ../core/panchangam.c ../core/panchangam.h $(BUILD)/libswe.a
+	$(CC) $(CFLAGS) -I$(SWE_DIR) compare.c ../core/panchangam.c $(BUILD)/libswe.a $(LDLIBS) -o $@
 
 clean:
-	rm -rf $(BUILD) smoke
+	rm -rf $(BUILD) smoke compare
