@@ -62,8 +62,18 @@ midnights. Details and a complete example are in
 
 ## Firmware
 
-Configure with `idf.py menuconfig` under **Panchangam Configuration**, then build
-and flash. See [Firmware](https://github.com/vgnshlvnz/panchangam-esp32/wiki/Firmware). Nothing should be flashed until
+The ESP-IDF v5.5 project lives in `firmware/`; the repository root is only the
+host build. Run every `idf.py` command from `firmware/` — starting at the repo
+root:
+
+```sh
+cd firmware
+idf.py set-target esp32s3
+idf.py menuconfig   # Panchangam Configuration
+idf.py build flash monitor
+```
+
+See [Firmware](https://github.com/vgnshlvnz/panchangam-esp32/wiki/Firmware). Nothing should be flashed until
 the host tests pass.
 
 ## Documentation
